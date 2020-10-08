@@ -1,3 +1,4 @@
+from functools import reduce
 from PIL import Image
 import os
 import sqlite3
@@ -7,18 +8,33 @@ from PIL import Image
 import argparse
 import time
 import concurrent.futures
+import threading
+from datetime import datetime
 
 startTime = time.perf_counter()
 
+ERROR_LOG_FILENAME = "errors.txt"
+
 ROOT_PATH = "/Volumes/DATA/"
 DB_TABLE_NAME = "Media"
+
+#FOR DEBUG PURPOSES ONLY!
+MAX_PROCESSING_COUNT = 0
 
 #Setup the arg parser
 parser = argparse.ArgumentParser(description="This script can accept different arguments to modify the behavior of execution")
 parser.add_argument("-fetch", help="Fetch all image info currently stored in the db", action="store_true")
 parser.add_argument("-drop", help="Drop the images table in the db", action="store_true")
 parser.add_argument("-dups", help="list all the images with non distinct hashes", action="store_true")
+
 args = parser.parse_args()
+
+def writeErrorToFile(error_message):
+
+    time_as_string = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+    with open(ERROR_LOG_FILENAME, "a") as f:
+        f.write(f'{time_as_string} - {error_message}\n')
+
 
 def getDirectories(dirPath):
 
@@ -182,7 +198,7 @@ def processMedia(fp):
                 getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
                 f'{getMetadataValue(imgData, "Composite:GPSLatitude")}',
                 f'-{getMetadataValue(imgData, "Composite:GPSLongitude")}' if len(str(getMetadataValue(imgData, "Composite:GPSLongitude"))) > 0 else "",
-                hashlib.md5(f'{getMetadataValue(imgData, "Composite:GPSLatitude")}{getMetadataValue(imgData, "Composite:GPSLongitude")}{getMetadataValue(imgData, "File:FileModifyDate")}'.encode('utf-8')).hexdigest(),
+                hashlib.md5(f'{getMetadataValue(imgData, "File:FileSize")}{getMetadataValue(imgData, "Composite:GPSLatitude")}{getMetadataValue(imgData, "Composite:GPSLongitude")}{getMetadataValue(imgData, "File:FileModifyDate")}'.encode('utf-8')).hexdigest(),
                 f'{getMetadataValue(imgData, "QuickTime:Make")} {getMetadataValue(imgData, "QuickTime:Model")}',
                 getMetadataValue(imgData, "QuickTime:CreateDate")
             )
@@ -205,21 +221,31 @@ def main(conn):
 
         results = c.fetchall()
 
-        for e in results:
+        for i in range(0, len(results)):
 
-            print(e)
+            for j in range(0, len(results[i])):
+                print(j, results[i][j])
 
         return
 
     if args.dups:
 
-        c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash IN (SELECT hash FROM images GROUP BY hash HAVING COUNT(*) > 1)')
+        c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash IN (SELECT hash FROM {DB_TABLE_NAME} GROUP BY hash HAVING COUNT(*) > 1)')
 
         results = c.fetchall()
+        
+        hash_list = reduce(lambda a, e: a + [e[9]], results, [])
+        
 
-        for e in results:
+        for h in hash_list:
 
-            print(e)
+            c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash="{h}"')
+            images = c.fetchall()
+
+            for img in images:
+                print(img[0])
+
+            print(" ")
 
         return
 
@@ -278,24 +304,37 @@ def main(conn):
                         c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
                         conn.commit()
                     except Exception as e:
-                        print(f'Error adding info for {r.result()[0]} to the db')
-                        print(e)
+
+                        #Write error to file using a separate thread
+                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {e} {r.result()[0]} at {r.result()[4]}'])
+                        task.start()
+                        task.join()
                     
-                    
+def reduce_test(a, b):
+    print(a)
+    print(b)
+    a.append(b)
+    print(type(a))
+    print(a)
+    print("")
+    return a
                         
 if __name__ == "__main__":
+
+    print(f'Script start at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}')
 
     #create a connection to the SQLite3 db
     conn = sqlite3.connect('images.db')
 
+    #call the main function with the db connection
     main(conn)
 
-    # #close the connection
+    #close the connection
     conn.close()
 
     endTime = time.perf_counter()
 
     print(f'Script ellapsed time: {round(endTime - startTime, 4)}')
-    # # print(f'{len(dirs)} directories to be processed')
+    # print(f'{len(dirs)} directories to be processed')
 
     
