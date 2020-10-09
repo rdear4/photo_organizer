@@ -10,22 +10,26 @@ import time
 import concurrent.futures
 import threading
 from datetime import datetime
+import math
 
 startTime = time.perf_counter()
 
 ERROR_LOG_FILENAME = "errors.txt"
 
+max_processing_count = 0
+
 ROOT_PATH = "/Volumes/DATA/"
 DB_TABLE_NAME = "Media"
 
-#FOR DEBUG PURPOSES ONLY!
-MAX_PROCESSING_COUNT = 0
+conn = None
 
 #Setup the arg parser
 parser = argparse.ArgumentParser(description="This script can accept different arguments to modify the behavior of execution")
+parser.add_argument("--path", action="store", type=str, help="Path of a directory to scan", default=".")
 parser.add_argument("-fetch", help="Fetch all image info currently stored in the db", action="store_true")
 parser.add_argument("-drop", help="Drop the images table in the db", action="store_true")
 parser.add_argument("-dups", help="list all the images with non distinct hashes", action="store_true")
+parser.add_argument("--max", action="store", help="Maximum number of files to process", type=int)
 
 args = parser.parse_args()
 
@@ -35,22 +39,79 @@ def writeErrorToFile(error_message):
     with open(ERROR_LOG_FILENAME, "a") as f:
         f.write(f'{time_as_string} - {error_message}\n')
 
+def getFiles(dirPath):
 
-def getDirectories(dirPath):
+    global conn
+    global max_processing_count
 
-    directories = []
+    if args.max and not max_processing_count < args.max:
+        # print("Max number of files to be processed reached")
+        return 
 
-    with os.scandir(dirPath) as it:
+    try:
 
-        for entry in it:
+        with concurrent.futures.ThreadPoolExecutor() as exe:
 
-            if not entry.name.startswith('.') and not entry.is_file():
+            with os.scandir(dirPath) as it:
 
-                directories.append(f'{dirPath}/{entry.name}')
+                results = []
+
+                for entry in it:
+
+                    #check to see if we've already processed the max number of images (if args.max is defined)
+                    if args.max and not max_processing_count < args.max:
+                        break
+
+                    if not entry.name.startswith('.') and entry.is_dir():
+
+                        # print(f'DIR: {entry.path}')
+                        getFiles(entry.path)
+
+                    #DEBUG ONLY
+
+                    if not entry.name.startswith('.') and entry.is_file():
+
+                        
+                        # print(f'********\n{dirPath}/{entry.name}\n{entry.is_dir()}\n{entry.is_file()}\n')
+                        results.append(exe.submit(processMedia, f'{dirPath}/{entry.name}'))
+                        
+                        # processMedia(f'{aDir}/{entry.name}')
+
+                        #DEBUG ONLY
+                        max_processing_count+=1
+
                 
-                directories.extend(getDirectories(f'{dirPath}/{entry.name}'))
+                for r in concurrent.futures.as_completed(results):
 
-    return directories
+                    if r.result() == None:
+                        continue
+
+                    try: 
+                        c = conn.cursor()
+                        sql = """
+                            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        """
+                        c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
+                        conn.commit()
+                    except ValueError:
+                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: Result Value unsupported. {r.result()}'])
+                        task.start()
+                        task.join()
+
+                    except sqlite3.IntegrityError as e:
+
+                        #Write error to file using a separate thread
+                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}'])
+                        task.start()
+                        task.join()
+    except FileNotFoundError as e:
+
+        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to find directory: {dirPath} - {e}'])
+        task.start()
+        task.join()
+
+
 
 def checkIfTableExists(cur, tbl_name):
 
@@ -161,15 +222,15 @@ def getMetadataValue(md, key):
 def processMedia(fp):
 
     with exiftool.ExifTool() as et:
-        
+        # print(fp)
         imgData = et.get_metadata(fp)
 
         extension = fp.split(".")[-1]
 
         imgInfo = None
         fullPath = getMetadataValue(imgData, 'SourceFile')
-
-        if extension in ["jpeg", "jpg", "png"]:
+        # print(f'EXTENSION: {extension.lower()}')
+        if extension.lower() in ["jpeg", "jpg", "png"]:
             # addImageToDB(conn, et.get_metadata(fp))
             img = Image.open(fullPath)
             imgInfo = (
@@ -187,7 +248,7 @@ def processMedia(fp):
                 getMetadataValue(imgData, "EXIF:DateTimeOriginal")
             )
 
-        elif extension in ["mov", "m4v"]:
+        elif extension.lower() in ["mov", "m4v", "mp4"]:
             imgInfo = (
                 fullPath.split("/")[-1],                                #filename
                 "video",
@@ -203,7 +264,10 @@ def processMedia(fp):
                 getMetadataValue(imgData, "QuickTime:CreateDate")
             )
         else:
-            print(f'Unsupported extension found: {extension}')
+
+            task = threading.Thread(target=writeErrorToFile, args=[f'Unsupported file type found {extension} for file: {fullPath}'])
+            task.start()
+            task.join()
 
     
     # return f"Processing {fp.split('/')[-1]} completed"
@@ -269,72 +333,31 @@ def main(conn):
         conn.commit()
 
         print(f'{DB_TABLE_NAME} table created successfully')
+    
 
+    getFiles(args.path)
 
-    #check to see if the directories table exists
-
-    #find all subdirectories in the current dir
-    dirs = getDirectories('.')
-
-    for aDir in dirs:
-
-        with os.scandir(aDir) as it:
-
-            with concurrent.futures.ThreadPoolExecutor() as exe:
-
-                results = []
-
-                for entry in it:
-
-                    if not entry.name.startswith('.') and entry.is_file:
-
-                        results.append(exe.submit(processMedia, f'{aDir}/{entry.name}'))
-                        # print(f'\nGetting Metadata for image...')
-                        # processMedia(f'{aDir}/{entry.name}')
-
-                for r in concurrent.futures.as_completed(results):
-
-                    # print(r.result())
-                    try: 
-                        # c = dbConn.cursor()
-                        sql = """
-                            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime)
-                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-                        """
-                        c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
-                        conn.commit()
-                    except Exception as e:
-
-                        #Write error to file using a separate thread
-                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {e} {r.result()[0]} at {r.result()[4]}'])
-                        task.start()
-                        task.join()
-                    
-def reduce_test(a, b):
-    print(a)
-    print(b)
-    a.append(b)
-    print(type(a))
-    print(a)
-    print("")
-    return a
                         
 if __name__ == "__main__":
 
     print(f'Script start at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}')
-
+    
     #create a connection to the SQLite3 db
     conn = sqlite3.connect('images.db')
 
     #call the main function with the db connection
     main(conn)
-
+    print("Main done")
     #close the connection
     conn.close()
 
     endTime = time.perf_counter()
 
-    print(f'Script ellapsed time: {round(endTime - startTime, 4)}')
+    seconds = math.floor(endTime - startTime)
+    minutes = math.floor( seconds / 60 )
+    seconds = seconds - (minutes * 60) if (seconds - (minutes * 60)) > 9 else f'0{seconds - (minutes * 60)}'
+    minutes = minutes if minutes > 9 else f'0{minutes}'
+    print(f'Script ellapsed time: {minutes}:{seconds}')
     # print(f'{len(dirs)} directories to be processed')
 
     
