@@ -1,5 +1,4 @@
 from functools import reduce
-from PIL import Image
 import os
 import sqlite3
 import exiftool
@@ -16,6 +15,7 @@ startTime = time.perf_counter()
 
 ERROR_LOG_FILENAME = "errors.txt"
 
+#For use with the 'max' argument in the argparser
 max_processing_count = 0
 
 ROOT_PATH = "/Volumes/DATA/"
@@ -89,8 +89,8 @@ def getFiles(dirPath):
                     try: 
                         c = conn.cursor()
                         sql = """
-                            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime)
-                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime, hasAAE)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """
                         c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
                         conn.commit()
@@ -105,6 +105,14 @@ def getFiles(dirPath):
                         task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}'])
                         task.start()
                         task.join()
+
+                    except Exception as e:
+
+                        #Write error to file using a separate thread
+                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}'])
+                        task.start()
+                        task.join()
+
     except FileNotFoundError as e:
 
         task = threading.Thread(target=writeErrorToFile, args=[f'Unable to find directory: {dirPath} - {e}'])
@@ -124,18 +132,20 @@ def createImagesTable(cur):
     sql = """
 
         CREATE TABLE {tname} (
+            id INTEGER PRIMARY KEY,
             name text,
             type text,
             filepath_original text,
             filepath_new text,
-            fqpn text NOT null UNIQUE,
+            fqpn text,
             size integer,
             date text,
             latitude text,
             longitude text,
             hash text,
             cameraModel text,
-            exifDateTime text
+            exifDateTime text,
+            hasAAE integer
         )
     
     """.format(tname=DB_TABLE_NAME)
@@ -221,57 +231,90 @@ def getMetadataValue(md, key):
 
 def processMedia(fp):
 
-    with exiftool.ExifTool() as et:
-        # print(fp)
-        imgData = et.get_metadata(fp)
-
-        extension = fp.split(".")[-1]
-
-        imgInfo = None
-        fullPath = getMetadataValue(imgData, 'SourceFile')
-        # print(f'EXTENSION: {extension.lower()}')
-        if extension.lower() in ["jpeg", "jpg", "png"]:
-            # addImageToDB(conn, et.get_metadata(fp))
-            img = Image.open(fullPath)
-            imgInfo = (
-                fullPath.split("/")[-1],                                #filename
-                "image",
-                f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
-                "",                                                     #filepath_new
-                f'{ROOT_PATH}{fullPath[2:]}',
-                getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
-                getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
-                f'{getMetadataValue(imgData, "EXIF:GPSLatitude")}',
-                f'-{getMetadataValue(imgData, "EXIF:GPSLongitude")}' if len(str(getMetadataValue(imgData, "EXIF:GPSLongitude"))) > 0 else "",
-                hashlib.md5(img.tobytes()).hexdigest(),
-                f'{getMetadataValue(imgData, "EXIF:Make")} {getMetadataValue(imgData, "EXIF:Model")}',
-                getMetadataValue(imgData, "EXIF:DateTimeOriginal")
-            )
-
-        elif extension.lower() in ["mov", "m4v", "mp4"]:
-            imgInfo = (
-                fullPath.split("/")[-1],                                #filename
-                "video",
-                f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
-                "",                                                     #filepath_new
-                f'{ROOT_PATH}{fullPath[2:]}',
-                getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
-                getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
-                f'{getMetadataValue(imgData, "Composite:GPSLatitude")}',
-                f'-{getMetadataValue(imgData, "Composite:GPSLongitude")}' if len(str(getMetadataValue(imgData, "Composite:GPSLongitude"))) > 0 else "",
-                hashlib.md5(f'{getMetadataValue(imgData, "File:FileSize")}{getMetadataValue(imgData, "Composite:GPSLatitude")}{getMetadataValue(imgData, "Composite:GPSLongitude")}{getMetadataValue(imgData, "File:FileModifyDate")}'.encode('utf-8')).hexdigest(),
-                f'{getMetadataValue(imgData, "QuickTime:Make")} {getMetadataValue(imgData, "QuickTime:Model")}',
-                getMetadataValue(imgData, "QuickTime:CreateDate")
-            )
-        else:
-
-            task = threading.Thread(target=writeErrorToFile, args=[f'Unsupported file type found {extension} for file: {fullPath}'])
-            task.start()
-            task.join()
-
     
-    # return f"Processing {fp.split('/')[-1]} completed"
-    return imgInfo
+    path_components = fp.split(".")
+
+    #get the file's extension
+    extension = path_components[-1]
+    
+    #convert the fp string into one that ends in AAE
+    
+    aaeFilepath = ".".join(path_components[:-1]+["AAE"])
+    # print("\n****")
+    # print(fp)
+    # print(aaeFilepath)
+    hasAAE = 0
+    if os.path.exists(aaeFilepath):
+        print(aaeFilepath, "Has AAE file")
+        hasAAE = 1
+
+    task = threading.Thread(target=writeErrorToFile, args=[f'Beginning to process file: {fp}'])
+    task.start()
+    task.join()
+
+    try:
+
+        with exiftool.ExifTool() as et:
+            # print(fp)
+            imgData = et.get_metadata(fp)
+
+            extension = fp.split(".")[-1]
+
+            imgInfo = None
+            fullPath = getMetadataValue(imgData, 'SourceFile')
+            # print(f'EXTENSION: {extension.lower()}')
+            if extension.lower() in ["jpeg", "jpg", "png"]:
+                # addImageToDB(conn, et.get_metadata(fp))
+                img = Image.open(fullPath)
+                imgInfo = (
+                    fullPath.split("/")[-1],                                #filename
+                    "image",
+                    f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
+                    "",                                                     #filepath_new
+                    f'{ROOT_PATH}{fullPath[2:]}',
+                    getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
+                    getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
+                    f'{getMetadataValue(imgData, "EXIF:GPSLatitude")}',
+                    f'-{getMetadataValue(imgData, "EXIF:GPSLongitude")}' if len(str(getMetadataValue(imgData, "EXIF:GPSLongitude"))) > 0 else "",
+                    hashlib.md5(img.tobytes()).hexdigest(),
+                    f'{getMetadataValue(imgData, "EXIF:Make")} {getMetadataValue(imgData, "EXIF:Model")}',
+                    getMetadataValue(imgData, "EXIF:DateTimeOriginal"),
+                    hasAAE
+                )
+
+            elif extension.lower() in ["mov", "m4v", "mp4", "avi"]:
+                imgInfo = (
+                    fullPath.split("/")[-1],                                #filename
+                    "video",
+                    f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
+                    "",                                                     #filepath_new
+                    f'{ROOT_PATH}{fullPath[2:]}',
+                    getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
+                    getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
+                    f'{getMetadataValue(imgData, "Composite:GPSLatitude")}',
+                    f'-{getMetadataValue(imgData, "Composite:GPSLongitude")}' if len(str(getMetadataValue(imgData, "Composite:GPSLongitude"))) > 0 else "",
+                    hashlib.md5(f'{getMetadataValue(imgData, "File:FileSize")}{getMetadataValue(imgData, "Composite:GPSLatitude")}{getMetadataValue(imgData, "Composite:GPSLongitude")}{getMetadataValue(imgData, "File:FileModifyDate")}'.encode('utf-8')).hexdigest(),
+                    f'{getMetadataValue(imgData, "QuickTime:Make")} {getMetadataValue(imgData, "QuickTime:Model")}',
+                    getMetadataValue(imgData, "QuickTime:CreateDate"),
+                    hasAAE
+                )
+            else:
+
+                task = threading.Thread(target=writeErrorToFile, args=[f'Unsupported file type found {extension} for file: {fullPath}'])
+                task.start()
+                task.join()
+
+        
+        # return f"Processing {fp.split('/')[-1]} completed"
+        return imgInfo
+
+    except Exception as e:
+
+        task = threading.Thread(target=writeErrorToFile, args=[f'Error processing file: {fp} - {e}'])
+        task.start()
+        task.join()
+
+        return None
 
 
 def main(conn):
