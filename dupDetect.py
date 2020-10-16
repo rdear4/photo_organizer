@@ -13,7 +13,7 @@ import math
 
 startTime = time.perf_counter()
 
-ERROR_LOG_FILENAME = "errors.txt"
+LOG_FILENAME = "log.txt"
 
 #For use with the 'max' argument in the argparser
 max_processing_count = 0
@@ -33,11 +33,17 @@ parser.add_argument("--max", action="store", help="Maximum number of files to pr
 
 args = parser.parse_args()
 
-def writeErrorToFile(error_message):
+def writeToLog(error_message):
+
+    task = threading.Thread(target=writeErrorToFile, args=[error_message])
+    task.start()
+    task.join()
+
+def writeToLogOnSeparateThread(err_msg):
 
     time_as_string = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-    with open(ERROR_LOG_FILENAME, "a") as f:
-        f.write(f'{time_as_string} - {error_message}\n')
+    with open(LOG_FILENAME, "a") as f:
+        f.write(f'{time_as_string} - {err_msg}\n')
 
 def getFiles(dirPath):
 
@@ -95,31 +101,21 @@ def getFiles(dirPath):
                         c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
                         conn.commit()
                     except ValueError:
-                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: Result Value unsupported. {r.result()}'])
-                        task.start()
-                        task.join()
+                        writeToLog(f'Unable to write to the DB: Result Value unsupported. {r.result()}')
 
                     except sqlite3.IntegrityError as e:
 
                         #Write error to file using a separate thread
-                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}'])
-                        task.start()
-                        task.join()
-
+                        writeToLog(f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}')
+                        
                     except Exception as e:
 
                         #Write error to file using a separate thread
-                        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}'])
-                        task.start()
-                        task.join()
+                        writeToLog(f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}')
 
     except FileNotFoundError as e:
 
-        task = threading.Thread(target=writeErrorToFile, args=[f'Unable to find directory: {dirPath} - {e}'])
-        task.start()
-        task.join()
-
-
+        writeToLog(f'Unable to find directory: {dirPath} - {e}')
 
 def checkIfTableExists(cur, tbl_name):
 
@@ -152,72 +148,6 @@ def createImagesTable(cur):
 
     cur.execute(sql)
 
-def addVideoToDB(dbConn, imgData):
-
-    fullPath = getMetadataValue(imgData, 'SourceFile')
-
-    imgInfo = (
-        fullPath.split("/")[-1],                                #filename
-        "video",
-        f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
-        "",                                                     #filepath_new
-        f'{ROOT_PATH}{fullPath[2:]}',
-        getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
-        getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
-        f'{getMetadataValue(imgData, "Composite:GPSLatitude")}',
-        f'-{getMetadataValue(imgData, "Composite:GPSLongitude")}' if len(str(getMetadataValue(imgData, "Composite:GPSLongitude"))) > 0 else "",
-        hashlib.md5(f'{getMetadataValue(imgData, "Composite:GPSLatitude")}{getMetadataValue(imgData, "Composite:GPSLongitude")}{getMetadataValue(imgData, "File:FileModifyDate")}'.encode('utf-8')).hexdigest(),
-        f'{getMetadataValue(imgData, "QuickTime:Make")} {getMetadataValue(imgData, "QuickTime:Model")}',
-        getMetadataValue(imgData, "QuickTime:CreateDate")
-    )
-
-    
-    try: 
-        c = dbConn.cursor()
-        sql = """
-            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        """
-        c.execute(sql.format(tname=DB_TABLE_NAME), imgInfo)
-        dbConn.commit()
-    except Exception as e:
-        print(f'Error adding info for {imgInfo[1]} to the db')
-        print(e)
-
-def addImageToDB(dbConn, imgData):
-
-    fullPath = getMetadataValue(imgData, 'SourceFile')
-    
-    #open image using PIL
-    img = Image.open(fullPath)
-
-    imgInfo = (
-        fullPath.split("/")[-1],                                #filename
-        "image",
-        f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
-        "",                                                     #filepath_new
-        f'{ROOT_PATH}{fullPath[2:]}',
-        getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
-        getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
-        f'{getMetadataValue(imgData, "EXIF:GPSLatitude")}',
-        f'-{getMetadataValue(imgData, "EXIF:GPSLongitude")}' if len(str(getMetadataValue(imgData, "EXIF:GPSLongitude"))) > 0 else "",
-        hashlib.md5(img.tobytes()).hexdigest(),
-        f'{getMetadataValue(imgData, "EXIF:Make")} {getMetadataValue(imgData, "EXIF:Model")}',
-        getMetadataValue(imgData, "EXIF:DateTimeOriginal")
-    )
-    
-    try: 
-        c = dbConn.cursor()
-        sql = """
-            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        """
-        c.execute(sql.format(tname=DB_TABLE_NAME), imgInfo)
-        dbConn.commit()
-    except Exception as e:
-        print(f'Error adding info for {imgInfo[0]} to the db')
-        print(e)
-
 def getMetadataValue(md, key):
 
     try:
@@ -236,21 +166,17 @@ def processMedia(fp):
 
     #get the file's extension
     extension = path_components[-1]
+    if extension == "AAE":
+        return None
     
+    #Check to see if the photo has an associated AAE file.
     #convert the fp string into one that ends in AAE
-    
     aaeFilepath = ".".join(path_components[:-1]+["AAE"])
-    # print("\n****")
-    # print(fp)
-    # print(aaeFilepath)
     hasAAE = 0
     if os.path.exists(aaeFilepath):
-        print(aaeFilepath, "Has AAE file")
         hasAAE = 1
 
-    task = threading.Thread(target=writeErrorToFile, args=[f'Beginning to process file: {fp}'])
-    task.start()
-    task.join()
+    writeToLog(f'Beginning to process file: {fp}')
 
     try:
 
@@ -262,19 +188,19 @@ def processMedia(fp):
 
             imgInfo = None
             fullPath = getMetadataValue(imgData, 'SourceFile')
-            # print(f'EXTENSION: {extension.lower()}')
-            if extension.lower() in ["jpeg", "jpg", "png"]:
-                # addImageToDB(conn, et.get_metadata(fp))
+            
+            if extension.lower() in ["jpeg", "jpg", "png", "heic"]:
+                
                 img = Image.open(fullPath)
                 imgInfo = (
                     fullPath.split("/")[-1],                                #filename
-                    "image",
+                    "image",                                                #denotes that the media type is image
                     f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
                     "",                                                     #filepath_new
-                    f'{ROOT_PATH}{fullPath[2:]}',
+                    f'{ROOT_PATH}{fullPath[2:]}',                           #the fully qulaified path name
                     getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
                     getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
-                    f'{getMetadataValue(imgData, "EXIF:GPSLatitude")}',
+                    f'{getMetadataValue(imgData, "EXIF:GPSLatitude")}',     #GPS Lat from Exif
                     f'-{getMetadataValue(imgData, "EXIF:GPSLongitude")}' if len(str(getMetadataValue(imgData, "EXIF:GPSLongitude"))) > 0 else "",
                     hashlib.md5(img.tobytes()).hexdigest(),
                     f'{getMetadataValue(imgData, "EXIF:Make")} {getMetadataValue(imgData, "EXIF:Model")}',
@@ -285,10 +211,10 @@ def processMedia(fp):
             elif extension.lower() in ["mov", "m4v", "mp4", "avi"]:
                 imgInfo = (
                     fullPath.split("/")[-1],                                #filename
-                    "video",
+                    "video",                                                #denotes that the media type is video
                     f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
                     "",                                                     #filepath_new
-                    f'{ROOT_PATH}{fullPath[2:]}',
+                    f'{ROOT_PATH}{fullPath[2:]}',                           #the fully qulaified path name
                     getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
                     getMetadataValue(imgData, "File:FileModifyDate"),       #date (file modify date)
                     f'{getMetadataValue(imgData, "Composite:GPSLatitude")}',
@@ -300,9 +226,7 @@ def processMedia(fp):
                 )
             else:
 
-                task = threading.Thread(target=writeErrorToFile, args=[f'Unsupported file type found {extension} for file: {fullPath}'])
-                task.start()
-                task.join()
+                writeToLog(f'Unsupported file type found {extension} for file: {fullPath}')
 
         
         # return f"Processing {fp.split('/')[-1]} completed"
@@ -310,9 +234,7 @@ def processMedia(fp):
 
     except Exception as e:
 
-        task = threading.Thread(target=writeErrorToFile, args=[f'Error processing file: {fp} - {e}'])
-        task.start()
-        task.join()
+        writeToLog(f'Error processing file: {fp} - {e}')
 
         return None
 
@@ -390,17 +312,17 @@ if __name__ == "__main__":
 
     #call the main function with the db connection
     main(conn)
-    print("Main done")
+    
     #close the connection
     conn.close()
 
     endTime = time.perf_counter()
 
     seconds = math.floor(endTime - startTime)
-    minutes = math.floor( seconds / 60 )
-    seconds = seconds - (minutes * 60) if (seconds - (minutes * 60)) > 9 else f'0{seconds - (minutes * 60)}'
+    hours = math.floor(seconds/3600)
+    minutes = math.floor( (seconds - hours * 2600) / 60 ) if ((seconds - hours * 2600) / 60) > 9 else f'0{((seconds - hours * 2600) / 60)}'
+    seconds = seconds - (minutes * 60) - (hours * 3600) if seconds - (minutes * 60) - (hours * 3600) > 9 else f'0{seconds - (minutes * 60) - (hours * 3600)}'
     minutes = minutes if minutes > 9 else f'0{minutes}'
     print(f'Script ellapsed time: {minutes}:{seconds}')
-    # print(f'{len(dirs)} directories to be processed')
 
     
