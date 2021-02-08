@@ -35,7 +35,7 @@ args = parser.parse_args()
 
 def writeToLog(error_message):
 
-    task = threading.Thread(target=writeErrorToFile, args=[error_message])
+    task = threading.Thread(target=writeToLogOnSeparateThread, args=[error_message])
     task.start()
     task.join()
 
@@ -171,9 +171,10 @@ def processMedia(fp):
     
     #Check to see if the photo has an associated AAE file.
     #convert the fp string into one that ends in AAE
-    aaeFilepath = ".".join(path_components[:-1]+["AAE"])
+    AAEFilepath = ".".join(path_components[:-1]+["AAE"])
+    aaeFilepath = ".".join(path_components[:-1]+["aae"])
     hasAAE = 0
-    if os.path.exists(aaeFilepath):
+    if os.path.exists(aaeFilepath) or os.path.exists(AAEFilepath):
         hasAAE = 1
 
     writeToLog(f'Beginning to process file: {fp}')
@@ -318,11 +319,11 @@ if __name__ == "__main__":
 
     endTime = time.perf_counter()
 
-    seconds = math.floor(endTime - startTime)
-    hours = math.floor(seconds/3600)
-    minutes = math.floor( (seconds - hours * 2600) / 60 ) if ((seconds - hours * 2600) / 60) > 9 else f'0{((seconds - hours * 2600) / 60)}'
-    seconds = seconds - (minutes * 60) - (hours * 3600) if seconds - (minutes * 60) - (hours * 3600) > 9 else f'0{seconds - (minutes * 60) - (hours * 3600)}'
-    minutes = minutes if minutes > 9 else f'0{minutes}'
-    print(f'Script ellapsed time: {minutes}:{seconds}')
+    total_seconds = math.floor(endTime - startTime)
+    hours = total_seconds / 3600 if total_seconds / 3600 > 9 else f'0{total_seconds / 3600}'
+    minutes = total_seconds % 3600 / 60 if total_seconds % 3600 / 60 > 9 else f'0{total_seconds % 3600 / 60}'
+    seconds = (total_seconds % 3600) % 60 if (total_seconds % 3600) % 60 > 9 else f'0{(total_seconds % 3600) % 60}'
+
+    print(f'Script ellapsed time: {hours}:{minutes}:{seconds}')
 
     
