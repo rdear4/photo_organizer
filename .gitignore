@@ -4,3 +4,4 @@ errors.txt
 log.txt
 __pycache__
 .DS_Store
+._dupDetect.py
