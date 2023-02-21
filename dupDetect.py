@@ -12,6 +12,7 @@ import math
 
 import logging
 from DBManager import DBManager
+from MediaFinder import MediaFinder
 
 startTime = time.perf_counter()
 
@@ -300,24 +301,30 @@ def main(dbman):
 
                         
 if __name__ == "__main__":
-    print("\n\n")
-    #setup logging
-    fmt = '[%(levelname)s] %(asctime)s - %(message)s'
-    logging.basicConfig(level=logging.DEBUG, format=fmt)
+
     
+    #setup logging
+    fmt = '[%(levelname)s]\t%(asctime)s - %(message)s'
+    logging.basicConfig(level=logging.DEBUG, format=fmt)
+    print()
+    startTime = time.perf_counter()
 
     logging.info(f'Script started at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}')
     
     #create a connection to the SQLite3 db
     # conn = sqlite3.connect('images.db')
-    dbManager = DBManager()
+    #dbManager = DBManager()
 
     #call the main function with the db connection
-    main(dbManager)
-    
+    # main(dbManager)
+
+    mediaFinder = MediaFinder("test_images")
+    # files = mediaFinder.searchDirectory("test_images")
+
+    logging.info("Media finder search complete!")
     #close the connection
     # conn.close()
-    dbManager.closeConnection()
+    # dbManager.closeConnection()
 
     endTime = time.perf_counter()
 
@@ -326,6 +333,6 @@ if __name__ == "__main__":
     minutes = total_seconds % 3600 / 60 if total_seconds % 3600 / 60 > 9 else f'0{total_seconds % 3600 / 60}'
     seconds = (total_seconds % 3600) % 60 if (total_seconds % 3600) % 60 > 9 else f'0{(total_seconds % 3600) % 60}'
 
-    logging.info(f'Script ellapsed time: {hours}:{minutes}:{seconds}')
+    logging.info(f'Script ellapsed time: {hours}:{minutes}:{seconds}\n')
 
     
