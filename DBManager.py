@@ -7,6 +7,7 @@ Responsible for adding new images and associated data to the db as well as check
 """
 
 import sqlite3
+import logging
 
 class DBManager:
 
@@ -25,7 +26,7 @@ class DBManager:
             self.createPrimaryTable()
 
     def checkIfTableExists(self, tname):
-        print(f"Checking if {tname} exists...")
+        logging.info(f"Checking if {tname} exists...")
 
         try:
             self.cursor.execute(f'SELECT count(name) FROM sqlite_master WHERE type=\'table\' AND name=\'{tname}\'')
@@ -50,7 +51,7 @@ class DBManager:
             raise Exception("There was an error adding that info to the db")
         
     def createPrimaryTable(self, tname=None):
-        print(f"Creating table {tname if not tname == None else self.primaryTableName}")
+        logging.info(f"Creating table {tname if not tname == None else self.primaryTableName}")
 
         try:
             sql = """
@@ -87,7 +88,7 @@ class DBManager:
         try:
             if self.checkIfTableExists(tname):
 
-                print("Table exists. Dropping...")
+                logging.info("Table exists. Dropping...")
 
                 self.cursor.execute(f'DROP TABLE {tname}')
 
@@ -102,11 +103,22 @@ class DBManager:
 
     def closeConnection(self):
 
-        print("Closing connection to db...")
+        logging.info("Closing connection to db...")
 
         try:
             self.connection.close()
-            print("DB Connection closed!")
+            logging.info("DB Connection closed!")
         except Exception as e:
             raise Exception(f"ERROR CLOSING DB CONNECTION - {e}")
-        
+    
+    def getAllRowsFromTable(self, tname=None):
+
+        res = self.cursor.execute(f"SELECT * FROM {tname if not tname is None else self.primaryTableName}")
+
+        return res.fetchall()
+
+    def findDuplicates(self):
+
+        res = self.cursor.execute(f'SELECT * FROM {self.primaryTableName} WHERE hash IN (SELECT hash FROM {self.primaryTableName} GROUP BY hash HAVING COUNT(*) > 1)')
+
+        return res.fetchall()
