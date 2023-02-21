@@ -1,6 +1,5 @@
 from functools import reduce
 import os
-import sqlite3
 import exiftool
 import hashlib
 from PIL import Image
@@ -11,6 +10,9 @@ import threading
 from datetime import datetime
 import math
 
+import logging
+from DBManager import DBManager
+
 startTime = time.perf_counter()
 
 LOG_FILENAME = "log.txt"
@@ -19,17 +21,16 @@ LOG_FILENAME = "log.txt"
 max_processing_count = 0
 
 ROOT_PATH = "/Volumes/DATA/"
-DB_TABLE_NAME = "Media"
-
-conn = None
 
 #Setup the arg parser
 parser = argparse.ArgumentParser(description="This script can accept different arguments to modify the behavior of execution")
-parser.add_argument("--path", action="store", type=str, help="Path of a directory to scan", default=".")
-parser.add_argument("-fetch", help="Fetch all image info currently stored in the db", action="store_true")
-parser.add_argument("-drop", help="Drop the images table in the db", action="store_true")
-parser.add_argument("-dups", help="list all the images with non distinct hashes", action="store_true")
+parser.add_argument("-s", "--searchonly", action="store_true", help="Only find images. Do not process them further beyond that")
+parser.add_argument("-p", "--path", action="store", type=str, help="Path of a directory to scan", default=".")
+parser.add_argument("-f", "--fetch", help="Fetch all image info currently stored in the db", action="store_true")
+parser.add_argument("--drop", help="Drop the images table in the db", action="store_true")
+parser.add_argument("--dups", help="list all the images with non distinct hashes", action="store_true")
 parser.add_argument("--max", action="store", help="Maximum number of files to process", type=int)
+parser.add_argument("-l", help="Enables debug and error ", action="store_true")
 
 args = parser.parse_args()
 
@@ -240,82 +241,83 @@ def processMedia(fp):
         return None
 
 
-def main(conn):
+def main(dbman):
     
-    #setup the cursor
-    c = conn.cursor()
-
     if args.fetch:
 
-        c.execute(f'SELECT * FROM {DB_TABLE_NAME}')
+        mediaEntries = dbman.getAllRowsFromTable()
 
-        results = c.fetchall()
-
-        for i in range(0, len(results)):
-
-            for j in range(0, len(results[i])):
-                print(j, results[i][j])
-
-        return
+        logging.debug(f"There are {len(mediaEntries)} entries in the table")
 
     if args.dups:
 
-        c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash IN (SELECT hash FROM {DB_TABLE_NAME} GROUP BY hash HAVING COUNT(*) > 1)')
+        logging.info("Finding duplicate entries in db...")
 
-        results = c.fetchall()
+        duplicates = dbman.findDuplicates()
+        # c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash IN (SELECT hash FROM {DB_TABLE_NAME} GROUP BY hash HAVING COUNT(*) > 1)')
+
+        # results = c.fetchall()
+        logging.debug(f"{len(duplicates)} duplicate(s) found")
+        # hash_list = reduce(lambda a, e: a + [e[9]], results, [])
         
-        hash_list = reduce(lambda a, e: a + [e[9]], results, [])
-        
 
-        for h in hash_list:
+        # for h in hash_list:
 
-            c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash="{h}"')
-            images = c.fetchall()
+        #     c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash="{h}"')
+        #     images = c.fetchall()
 
-            for img in images:
-                print(img[0])
+        #     for img in images:
+        #         print(img[0])
 
-            print(" ")
+        #     print(" ")
 
-        return
+        # return
 
-    if args.drop:
+    # if args.drop:
 
-        if checkIfTableExists(c, DB_TABLE_NAME):
+    #     if checkIfTableExists(c, DB_TABLE_NAME):
 
-            c.execute(f'DROP TABLE {DB_TABLE_NAME}')
+    #         c.execute(f'DROP TABLE {DB_TABLE_NAME}')
 
-            conn.commit()
+    #         conn.commit()
 
-        return
+    #     return
 
     #check to see if the images table exists
-    if not checkIfTableExists(c, DB_TABLE_NAME):
+    # if not checkIfTableExists(c, DB_TABLE_NAME):
 
-        print(f'{DB_TABLE_NAME} table does not exist. Creating it now...')
-        #create the images table
-        createImagesTable(c)
+    #     print(f'{DB_TABLE_NAME} table does not exist. Creating it now...')
+    #     #create the images table
+    #     createImagesTable(c)
 
-        conn.commit()
+    #     conn.commit()
 
-        print(f'{DB_TABLE_NAME} table created successfully')
+    #     print(f'{DB_TABLE_NAME} table created successfully')
     
 
-    getFiles(args.path)
+    # getFiles(args.path)
+    
 
                         
 if __name__ == "__main__":
+    print("\n\n")
+    #setup logging
+    fmt = '[%(levelname)s] %(asctime)s - %(message)s'
+    logging.basicConfig(level=logging.DEBUG, format=fmt)
+    
 
-    print(f'Script start at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}')
+    logging.info(f'Script started at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}')
     
     #create a connection to the SQLite3 db
-    conn = sqlite3.connect('images.db')
+    # conn = sqlite3.connect('images.db')
+    dbManager = DBManager()
 
     #call the main function with the db connection
-    main(conn)
+    main(dbManager)
     
     #close the connection
-    conn.close()
+    # conn.close()
+    dbManager.closeConnection()
 
     endTime = time.perf_counter()
 
@@ -324,6 +326,6 @@ if __name__ == "__main__":
     minutes = total_seconds % 3600 / 60 if total_seconds % 3600 / 60 > 9 else f'0{total_seconds % 3600 / 60}'
     seconds = (total_seconds % 3600) % 60 if (total_seconds % 3600) % 60 > 9 else f'0{(total_seconds % 3600) % 60}'
 
-    print(f'Script ellapsed time: {hours}:{minutes}:{seconds}')
+    logging.info(f'Script ellapsed time: {hours}:{minutes}:{seconds}')
 
     
