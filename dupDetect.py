@@ -26,8 +26,8 @@ ROOT_PATH = os.getcwd()
 
 #Setup the arg parser
 parser = argparse.ArgumentParser(description="This script can accept different arguments to modify the behavior of execution")
+parser.add_argument("path", help="Path to the directory containing the media to be analyzed", type=str)
 parser.add_argument("-s", "--searchonly", action="store_true", help="Only find images. Do not process them further beyond that")
-parser.add_argument("-p", "--path", action="store", type=str, help="Path of a directory to scan", default=".")
 parser.add_argument("-f", "--fetch", help="Fetch all image info currently stored in the db", action="store_true")
 parser.add_argument("--drop", help="Drop the images table in the db", action="store_true")
 parser.add_argument("--dups", help="list all the images with non distinct hashes", action="store_true")
@@ -321,7 +321,7 @@ if __name__ == "__main__":
     #Set up queues
     filePathQueue = Queue()
 
-    mediaFinder = MediaFinder("test_images", _queueRef = filePathQueue)
+    mediaFinder = MediaFinder(args.path, _queueRef = filePathQueue)
     
     #create a connection to the SQLite3 db
     dbManager = DBManager("images.db", "Media")
@@ -338,7 +338,7 @@ if __name__ == "__main__":
 
             # print(f"There are {len(filePaths)} files to process")
             # print("********************************************")
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
                 # results = [executor.submit(processMedia, fp) for fp in filePaths]
                 
                 results = [executor.submit(processMedia, fp) for fp in filePaths]

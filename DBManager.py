@@ -13,7 +13,6 @@ class DBManager:
 
     def __init__(self, _dbname="images.db", _primaryTableName="Media", _reinit = False):
 
-        
         self.connection = sqlite3.connect(_dbname)
         self.cursor = self.connection.cursor()
         self.primaryTableName = _primaryTableName
@@ -51,7 +50,7 @@ class DBManager:
                 self.cursor.execute(sql.format(tn=tname if not tname == None else self.primaryTableName), mediaInfo)
                 self.connection.commit()
             except Exception as e:
-                print(e)
+                print("There was an error adding that info to the db")
                 # raise Exception("There was an error adding that info to the db")
         
     def createPrimaryTable(self, tname=None):
@@ -82,7 +81,8 @@ class DBManager:
             res = self.cursor.execute(sql)
 
         except Exception as e:
-            raise Exception(f"ERROR CREATING PRIMARY TABLE - {e}")
+            print(e)
+            # raise Exception(f"ERROR CREATING PRIMARY TABLE - {e}")
 
     def dropTable(self, tname=None):
 
