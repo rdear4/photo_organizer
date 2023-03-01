@@ -33,10 +33,8 @@ parser.add_argument("--drop", help="Drop the images table in the db", action="st
 parser.add_argument("--dups", help="list all the images with non distinct hashes", action="store_true")
 parser.add_argument("--max", action="store", help="Maximum number of files to process", type=int)
 parser.add_argument("-l", help="Enables debug and error ", action="store_true")
-
+parser.add_argument("--maxworkers", help="The number of processors to allocate toward the mulitprocessing pool. Default is 1, if the provided value is greater than number available, the max number on system is used", default=1, type=int)
 args = parser.parse_args()
-
-
 
 def writeToLog(message):
 
@@ -338,7 +336,7 @@ if __name__ == "__main__":
 
             # print(f"There are {len(filePaths)} files to process")
             # print("********************************************")
-            with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=args.maxworkers if args.maxworkers <= os.cpu_count() else os.cpu_count()) as executor:
                 # results = [executor.submit(processMedia, fp) for fp in filePaths]
                 
                 results = [executor.submit(processMedia, fp) for fp in filePaths]

@@ -50,7 +50,8 @@ class DBManager:
                 self.cursor.execute(sql.format(tn=tname if not tname == None else self.primaryTableName), mediaInfo)
                 self.connection.commit()
             except Exception as e:
-                print("There was an error adding that info to the db")
+                logging.error(f"There was an error adding that info to the db - {e}")
+                # print("There was an error adding that info to the db")
                 # raise Exception("There was an error adding that info to the db")
         
     def createPrimaryTable(self, tname=None):
