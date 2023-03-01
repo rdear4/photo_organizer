@@ -1,14 +1,15 @@
 from functools import reduce
 import os
-import exiftool
+from exiftool import ExifToolHelper
 import hashlib
 from PIL import Image
 import argparse
 import time
 import concurrent.futures
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
+from multiprocessing import Queue, Process
 
 import logging
 from DBManager import DBManager
@@ -21,7 +22,7 @@ LOG_FILENAME = "log.txt"
 #For use with the 'max' argument in the argparser
 max_processing_count = 0
 
-ROOT_PATH = "/Volumes/DATA/"
+ROOT_PATH = os.getcwd()
 
 #Setup the arg parser
 parser = argparse.ArgumentParser(description="This script can accept different arguments to modify the behavior of execution")
@@ -35,120 +36,122 @@ parser.add_argument("-l", help="Enables debug and error ", action="store_true")
 
 args = parser.parse_args()
 
-def writeToLog(error_message):
 
-    task = threading.Thread(target=writeToLogOnSeparateThread, args=[error_message])
+
+def writeToLog(message):
+
+    task = threading.Thread(target=writeToLogOnSeparateThread, args=[message])
     task.start()
     task.join()
 
-def writeToLogOnSeparateThread(err_msg):
+def writeToLogOnSeparateThread(msg):
 
     time_as_string = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
     with open(LOG_FILENAME, "a") as f:
-        f.write(f'{time_as_string} - {err_msg}\n')
+        f.write(f'[{msg[0]}] - {time_as_string} - {msg[1]}\n')
 
-def getFiles(dirPath):
+# def getFiles(dirPath):
 
-    global conn
-    global max_processing_count
+#     global conn
+#     global max_processing_count
 
-    if args.max and not max_processing_count < args.max:
-        # print("Max number of files to be processed reached")
-        return 
+#     if args.max and not max_processing_count < args.max:
+#         # print("Max number of files to be processed reached")
+#         return 
 
-    try:
+#     try:
 
-        with concurrent.futures.ThreadPoolExecutor() as exe:
+#         with concurrent.futures.ThreadPoolExecutor() as exe:
 
-            with os.scandir(dirPath) as it:
+#             with os.scandir(dirPath) as it:
 
-                results = []
+#                 results = []
 
-                for entry in it:
+#                 for entry in it:
 
-                    #check to see if we've already processed the max number of images (if args.max is defined)
-                    if args.max and not max_processing_count < args.max:
-                        break
+#                     #check to see if we've already processed the max number of images (if args.max is defined)
+#                     if args.max and not max_processing_count < args.max:
+#                         break
 
-                    if not entry.name.startswith('.') and entry.is_dir():
+#                     if not entry.name.startswith('.') and entry.is_dir():
 
-                        # print(f'DIR: {entry.path}')
-                        getFiles(entry.path)
+#                         # print(f'DIR: {entry.path}')
+#                         getFiles(entry.path)
 
-                    #DEBUG ONLY
+#                     #DEBUG ONLY
 
-                    if not entry.name.startswith('.') and entry.is_file():
+#                     if not entry.name.startswith('.') and entry.is_file():
 
                         
-                        # print(f'********\n{dirPath}/{entry.name}\n{entry.is_dir()}\n{entry.is_file()}\n')
-                        results.append(exe.submit(processMedia, f'{dirPath}/{entry.name}'))
+#                         # print(f'********\n{dirPath}/{entry.name}\n{entry.is_dir()}\n{entry.is_file()}\n')
+#                         results.append(exe.submit(processMedia, f'{dirPath}/{entry.name}'))
                         
-                        # processMedia(f'{aDir}/{entry.name}')
+#                         # processMedia(f'{aDir}/{entry.name}')
 
-                        #DEBUG ONLY
-                        max_processing_count+=1
+#                         #DEBUG ONLY
+#                         max_processing_count+=1
 
                 
-                for r in concurrent.futures.as_completed(results):
+#                 for r in concurrent.futures.as_completed(results):
 
-                    if r.result() == None:
-                        continue
+#                     if r.result() == None:
+#                         continue
 
-                    try: 
-                        c = conn.cursor()
-                        sql = """
-                            INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime, hasAAE)
-                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        """
-                        c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
-                        conn.commit()
-                    except ValueError:
-                        writeToLog(f'Unable to write to the DB: Result Value unsupported. {r.result()}')
+#                     try: 
+#                         c = conn.cursor()
+#                         sql = """
+#                             INSERT INTO {tname}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime, hasAAE)
+#                             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+#                         """
+#                         c.execute(sql.format(tname=DB_TABLE_NAME), r.result())
+#                         conn.commit()
+#                     except ValueError:
+#                         writeToLog(f'Unable to write to the DB: Result Value unsupported. {r.result()}')
 
-                    except sqlite3.IntegrityError as e:
+#                     except sqlite3.IntegrityError as e:
 
-                        #Write error to file using a separate thread
-                        writeToLog(f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}')
+#                         #Write error to file using a separate thread
+#                         writeToLog(f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}')
                         
-                    except Exception as e:
+#                     except Exception as e:
 
-                        #Write error to file using a separate thread
-                        writeToLog(f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}')
+#                         #Write error to file using a separate thread
+#                         writeToLog(f'Unable to write to the DB: {r.result()[0]} at {r.result()[4]} - {e}')
 
-    except FileNotFoundError as e:
+#     except FileNotFoundError as e:
 
-        writeToLog(f'Unable to find directory: {dirPath} - {e}')
+#         writeToLog(f'Unable to find directory: {dirPath} - {e}')
 
-def checkIfTableExists(cur, tbl_name):
+# def checkIfTableExists(cur, tbl_name):
 
-    cur.execute(f'SELECT count(name) FROM sqlite_master WHERE type=\'table\' AND name=\'{tbl_name}\'')
+#     cur.execute(f'SELECT count(name) FROM sqlite_master WHERE type=\'table\' AND name=\'{tbl_name}\'')
 
-    return cur.fetchone()[0] == 1
+#     return cur.fetchone()[0] == 1
 
-def createImagesTable(cur):
+# def createImagesTable(cur):
 
-    sql = """
+    # sql = """
 
-        CREATE TABLE {tname} (
-            id INTEGER PRIMARY KEY,
-            name text,
-            type text,
-            filepath_original text,
-            filepath_new text,
-            fqpn text,
-            size integer,
-            date text,
-            latitude text,
-            longitude text,
-            hash text,
-            cameraModel text,
-            exifDateTime text,
-            hasAAE integer
-        )
+    #     CREATE TABLE {tname} (
+    #         id INTEGER PRIMARY KEY,
+    #         name text,
+    #         type text,
+    #         filepath_original text,
+    #         filepath_new text,
+    #         fqpn text,
+    #         size integer,
+    #         date text,
+    #         latitude text,
+    #         longitude text,
+    #         hash text,
+    #         cameraModel text,
+    #         exifDateTime text,
+    #         hasAAE integer
+    #     )
     
-    """.format(tname=DB_TABLE_NAME)
+    # """.format(tname=DB_TABLE_NAME)
 
-    cur.execute(sql)
+    # cur.execute(sql)
 
 def getMetadataValue(md, key):
 
@@ -163,7 +166,6 @@ def getMetadataValue(md, key):
 
 def processMedia(fp):
 
-    
     path_components = fp.split(".")
 
     #get the file's extension
@@ -179,26 +181,34 @@ def processMedia(fp):
     if os.path.exists(aaeFilepath) or os.path.exists(AAEFilepath):
         hasAAE = 1
 
-    writeToLog(f'Beginning to process file: {fp}')
+    writeToLog(('INFO', f'Beginning to process file: {fp}'))
+    
 
     try:
 
-        with exiftool.ExifTool() as et:
-            # print(fp)
-            imgData = et.get_metadata(fp)
+        with ExifToolHelper() as et:
+            
+            imgData = et.get_metadata(fp)[0]
+            
 
             extension = fp.split(".")[-1]
 
             imgInfo = None
             fullPath = getMetadataValue(imgData, 'SourceFile')
             
+            
             if extension.lower() in ["jpeg", "jpg", "png", "heic"]:
-                
-                img = Image.open(fullPath)
+                # pass
+                try:
+                    # pass
+                    img = Image.open(fullPath)
+                except Exception as e:
+                    logging.error(e)
+                    # pass
                 imgInfo = (
                     fullPath.split("/")[-1],                                #filename
                     "image",                                                #denotes that the media type is image
-                    f'{ROOT_PATH}{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
+                    f'{ROOT_PATH}/{"/".join(fullPath.split("/")[1:-1])}',    #filepath-original
                     "",                                                     #filepath_new
                     f'{ROOT_PATH}{fullPath[2:]}',                           #the fully qulaified path name
                     getMetadataValue(imgData, "File:FileSize"),             #size (in bytes)
@@ -212,6 +222,7 @@ def processMedia(fp):
                 )
 
             elif extension.lower() in ["mov", "m4v", "mp4", "avi"]:
+            
                 imgInfo = (
                     fullPath.split("/")[-1],                                #filename
                     "video",                                                #denotes that the media type is video
@@ -228,19 +239,18 @@ def processMedia(fp):
                     hasAAE
                 )
             else:
-
-                writeToLog(f'Unsupported file type found {extension} for file: {fullPath}')
+                
+                writeToLog(('ERROR', f'Unsupported file type found {extension} for file: {fullPath}'))
 
         
         # return f"Processing {fp.split('/')[-1]} completed"
         return imgInfo
 
     except Exception as e:
-
-        writeToLog(f'Error processing file: {fp} - {e}')
+        
+        writeToLog(('ERROR', f'Error processing file: {fp} - {e}'))
 
         return None
-
 
 def main(dbman):
     
@@ -298,41 +308,57 @@ def main(dbman):
 
     # getFiles(args.path)
     
-
-                        
+           
 if __name__ == "__main__":
 
-    
     #setup logging
     fmt = '[%(levelname)s]\t%(asctime)s - %(message)s'
-    logging.basicConfig(level=logging.DEBUG, format=fmt)
+    logging.basicConfig(level=logging.INFO, format=fmt)
     print()
     startTime = time.perf_counter()
+    logging.info(f'Script started at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S:%f")}')
 
-    logging.info(f'Script started at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}')
+    #Set up queues
+    filePathQueue = Queue()
+
+    mediaFinder = MediaFinder("test_images", _queueRef = filePathQueue)
     
     #create a connection to the SQLite3 db
-    # conn = sqlite3.connect('images.db')
-    #dbManager = DBManager()
+    dbManager = DBManager("images.db", "Media")
 
     #call the main function with the db connection
-    # main(dbManager)
+    
+    # logging.debug("Media processing complete")
+    while mediaFinder.stillSearching() or not filePathQueue.empty():
+        
+        filePaths = []
+        while not filePathQueue.empty():
+            filePaths.append(filePathQueue.get())
+        if len(filePaths):
 
-    mediaFinder = MediaFinder("test_images")
-    # files = mediaFinder.searchDirectory("test_images")
+            # print(f"There are {len(filePaths)} files to process")
+            # print("********************************************")
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                # results = [executor.submit(processMedia, fp) for fp in filePaths]
+                
+                results = [executor.submit(processMedia, fp) for fp in filePaths]
 
-    logging.info("Media finder search complete!")
+                for res in concurrent.futures.as_completed(results):
+                    
+                    dbManager.addMediaDataToDB(res.result())
+
+    
+    logging.info("Media finder search complete")
+    
     #close the connection
-    # conn.close()
-    # dbManager.closeConnection()
+    dbManager.closeConnection()
 
     endTime = time.perf_counter()
 
-    total_seconds = math.floor(endTime - startTime)
-    hours = total_seconds / 3600 if total_seconds / 3600 > 9 else f'0{total_seconds / 3600}'
-    minutes = total_seconds % 3600 / 60 if total_seconds % 3600 / 60 > 9 else f'0{total_seconds % 3600 / 60}'
-    seconds = (total_seconds % 3600) % 60 if (total_seconds % 3600) % 60 > 9 else f'0{(total_seconds % 3600) % 60}'
-
-    logging.info(f'Script ellapsed time: {hours}:{minutes}:{seconds}\n')
+    total_seconds = endTime - startTime
+    logging.info(f'Script ended at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S:%f")}')
+    logging.info(f"Elapsed time: {total_seconds}")
+    logging.info(f'Script ellapsed time: {timedelta(seconds=total_seconds)}\n')
+    
 
     

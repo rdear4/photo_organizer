@@ -11,7 +11,7 @@ import logging
 
 class DBManager:
 
-    def __init__(self, _dbname="images.db", _primaryTableName="Media"):
+    def __init__(self, _dbname="images.db", _primaryTableName="Media", _reinit = False):
 
         
         self.connection = sqlite3.connect(_dbname)
@@ -23,6 +23,10 @@ class DBManager:
         # If it does not, create it
         if not self.checkIfTableExists(self.primaryTableName):
             print(f"{self.primaryTableName} does not exists!")
+            self.createPrimaryTable()
+
+        if _reinit:
+            self.dropTable(self.primaryTableName)
             self.createPrimaryTable()
 
     def checkIfTableExists(self, tname):
@@ -37,18 +41,18 @@ class DBManager:
 
         return False
 
-    def addMediaDataToDB(self, tname=None, mediaInfo=None):
-
-        try:
-            sql = """
-                INSERT INTO {tn}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime, hasAAE)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """
-            self.cursor.execute(sql.format(tn=tname if not tname == None else self.primaryTableName), mediaInfo)
-            self.connection.commit()
-        except Exception as e:
-            print(e)
-            raise Exception("There was an error adding that info to the db")
+    def addMediaDataToDB(self, mediaInfo, tname=None):
+        if not mediaInfo is None:
+            try:
+                sql = """
+                    INSERT INTO {tn}(name, type, filepath_original, filepath_new, fqpn, size, date, latitude, longitude, hash, cameraModel, exifDateTime, hasAAE)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """
+                self.cursor.execute(sql.format(tn=tname if not tname == None else self.primaryTableName), mediaInfo)
+                self.connection.commit()
+            except Exception as e:
+                print(e)
+                # raise Exception("There was an error adding that info to the db")
         
     def createPrimaryTable(self, tname=None):
         logging.info(f"Creating table {tname if not tname == None else self.primaryTableName}")
@@ -62,7 +66,7 @@ class DBManager:
                     type text,
                     filepath_original text,
                     filepath_new text,
-                    fqpn text,
+                    fqpn text UNIQUE,
                     size integer,
                     date text,
                     latitude text,
