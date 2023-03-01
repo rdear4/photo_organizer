@@ -23,11 +23,47 @@ class DBManager:
         if not self.checkIfTableExists(self.primaryTableName):
             print(f"{self.primaryTableName} does not exists!")
             self.createPrimaryTable()
+        if not self.checkIfTableExists("Directories"):
+            print(f"Directories table does not exists! Creating it now")
+            self.createDirectoryTable()
 
         if _reinit:
             self.dropTable(self.primaryTableName)
             self.createPrimaryTable()
+            self.dropTable("Directories")
+            self.createDirectoryTable()
 
+    def createDirectoryTable(self):
+        try:
+            sql = """
+
+                CREATE TABLE Directories (
+                    id INTEGER PRIMARY KEY,
+                    dirname text,
+                    dirpath text UNIQUE,
+                    filecount int,
+                    fully_searched int DEFAULT 0
+                )
+            
+            """
+
+            res = self.cursor.execute(sql)
+            logging.info("Directory table created")
+        except Exception as e:
+            print(e)
+            # raise Exception(f"ERROR CREATING PRIMARY TABLE - {e}")
+
+    def addDirectoryInfoToTable(self, dirInfo):
+        try:
+            sql = """
+                INSERT INTO Directories(dirname, dirpath, filecount)
+                VALUES(?,?,?)
+            """
+            self.cursor.execute(sql, dirInfo)
+            self.connection.commit()
+        except Exception as e:
+            raise Exception(f"Error adding directory info to table - {e}")
+        
     def checkIfTableExists(self, tname):
         logging.info(f"Checking if {tname} exists...")
 
@@ -50,10 +86,11 @@ class DBManager:
                 self.cursor.execute(sql.format(tn=tname if not tname == None else self.primaryTableName), mediaInfo)
                 self.connection.commit()
             except Exception as e:
-                logging.error(f"There was an error adding that info to the db - {e}")
+                # logging.error(f"There was an error adding that info to the db - {e}")
                 # print("There was an error adding that info to the db")
-                # raise Exception("There was an error adding that info to the db")
-        
+                raise Exception("There was an error adding that info to the db - {e}")
+    
+    
     def createPrimaryTable(self, tname=None):
         logging.info(f"Creating table {tname if not tname == None else self.primaryTableName}")
 
@@ -80,6 +117,7 @@ class DBManager:
             """.format(tname=tname if not tname == None else self.primaryTableName)
 
             res = self.cursor.execute(sql)
+            logging.info("Media table created")
 
         except Exception as e:
             print(e)

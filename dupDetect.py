@@ -28,11 +28,10 @@ ROOT_PATH = os.getcwd()
 parser = argparse.ArgumentParser(description="This script can accept different arguments to modify the behavior of execution")
 parser.add_argument("path", help="Path to the directory containing the media to be analyzed", type=str)
 parser.add_argument("-s", "--searchonly", action="store_true", help="Only find images. Do not process them further beyond that")
-parser.add_argument("-f", "--fetch", help="Fetch all image info currently stored in the db", action="store_true")
-parser.add_argument("--drop", help="Drop the images table in the db", action="store_true")
+parser.add_argument("-d", "--dirsonly", action="store_true", help="Only find the directories and the number of files in each")
+parser.add_argument("-c", "--clean", help="Clears all db tables and starts process from scratch", action="store_true")
 parser.add_argument("--dups", help="list all the images with non distinct hashes", action="store_true")
-parser.add_argument("--max", action="store", help="Maximum number of files to process", type=int)
-parser.add_argument("-l", help="Enables debug and error ", action="store_true")
+parser.add_argument("-l", "--logging", help="Enables debug and error ", action="store_true")
 parser.add_argument("--maxworkers", help="The number of processors to allocate toward the mulitprocessing pool. Default is 1, if the provided value is greater than number available, the max number on system is used", default=1, type=int)
 args = parser.parse_args()
 
@@ -44,9 +43,9 @@ def writeToLog(message):
 
 def writeToLogOnSeparateThread(msg):
 
-    time_as_string = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+    time_as_string = datetime.now().strftime("%m/%d/%Y - %H:%M:%S")
     with open(LOG_FILENAME, "a") as f:
-        f.write(f'[{msg[0]}] - {time_as_string} - {msg[1]}\n')
+        f.write(f'[{msg[0]}] {(8 - len(msg[0])) * " "}- {time_as_string} - {msg[1]}\n')
 
 # def getFiles(dirPath):
 
@@ -201,7 +200,7 @@ def processMedia(fp):
                     # pass
                     img = Image.open(fullPath)
                 except Exception as e:
-                    logging.error(e)
+                    writeToLog(("ERROR", e))
                     # pass
                 imgInfo = (
                     fullPath.split("/")[-1],                                #filename
@@ -249,77 +248,24 @@ def processMedia(fp):
         writeToLog(('ERROR', f'Error processing file: {fp} - {e}'))
 
         return None
-
-def main(dbman):
-    
-    if args.fetch:
-
-        mediaEntries = dbman.getAllRowsFromTable()
-
-        logging.debug(f"There are {len(mediaEntries)} entries in the table")
-
-    if args.dups:
-
-        logging.info("Finding duplicate entries in db...")
-
-        duplicates = dbman.findDuplicates()
-        # c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash IN (SELECT hash FROM {DB_TABLE_NAME} GROUP BY hash HAVING COUNT(*) > 1)')
-
-        # results = c.fetchall()
-        logging.debug(f"{len(duplicates)} duplicate(s) found")
-        # hash_list = reduce(lambda a, e: a + [e[9]], results, [])
-        
-
-        # for h in hash_list:
-
-        #     c.execute(f'SELECT * FROM {DB_TABLE_NAME} WHERE hash="{h}"')
-        #     images = c.fetchall()
-
-        #     for img in images:
-        #         print(img[0])
-
-        #     print(" ")
-
-        # return
-
-    # if args.drop:
-
-    #     if checkIfTableExists(c, DB_TABLE_NAME):
-
-    #         c.execute(f'DROP TABLE {DB_TABLE_NAME}')
-
-    #         conn.commit()
-
-    #     return
-
-    #check to see if the images table exists
-    # if not checkIfTableExists(c, DB_TABLE_NAME):
-
-    #     print(f'{DB_TABLE_NAME} table does not exist. Creating it now...')
-    #     #create the images table
-    #     createImagesTable(c)
-
-    #     conn.commit()
-
-    #     print(f'{DB_TABLE_NAME} table created successfully')
-    
-
-    # getFiles(args.path)
-    
            
 if __name__ == "__main__":
 
     #setup logging
+
     fmt = '[%(levelname)s]\t%(asctime)s - %(message)s'
-    logging.basicConfig(level=logging.INFO, format=fmt)
-    print()
+    if args.logging:
+
+        logging.basicConfig(level=logging.INFO, format=fmt)
+        print()
+    
     startTime = time.perf_counter()
     logging.info(f'Script started at: {datetime.now().strftime("%m/%d/%Y, %H:%M:%S:%f")}')
 
     #Set up queues
     filePathQueue = Queue()
 
-    mediaFinder = MediaFinder(args.path, _queueRef = filePathQueue)
+    mediafinder = None
     
     #create a connection to the SQLite3 db
     dbManager = DBManager("images.db", "Media")
@@ -327,23 +273,44 @@ if __name__ == "__main__":
     #call the main function with the db connection
     
     # logging.debug("Media processing complete")
-    while mediaFinder.stillSearching() or not filePathQueue.empty():
+    if args.dirsonly:
+        mediaFinder = MediaFinder(args.path, _queueRef=filePathQueue, _searchDirsOnly=True)
+        totalImages = 0
+        totalDirs = 0
+        while mediaFinder.stillSearching() or not filePathQueue.empty():
         
-        filePaths = []
-        while not filePathQueue.empty():
-            filePaths.append(filePathQueue.get())
-        if len(filePaths):
+            while not filePathQueue.empty():
+                # print(f"MAIN: {filePathQueue.get()}")
+                dirInfo = filePathQueue.get()
+                totalImages = totalImages + dirInfo[1]
+                totalDirs = totalDirs + 1
+                try:
+                    dbManager.addDirectoryInfoToTable((dirInfo[0].split("/")[-1], dirInfo[0], dirInfo[1]))
+                except Exception as e:
+                    writeToLog(("ERROR", e))
+        logging.info(f"A total of {totalImages} images were found in {totalDirs} directories")
+    else:    
+        mediaFinder = MediaFinder(args.path, _queueRef = filePathQueue)
+        while mediaFinder.stillSearching() or not filePathQueue.empty():
+            
+            filePaths = []
+            while not filePathQueue.empty():
+                filePaths.append(filePathQueue.get())
+            if len(filePaths):
 
-            # print(f"There are {len(filePaths)} files to process")
-            # print("********************************************")
-            with concurrent.futures.ProcessPoolExecutor(max_workers=args.maxworkers if args.maxworkers <= os.cpu_count() else os.cpu_count()) as executor:
-                # results = [executor.submit(processMedia, fp) for fp in filePaths]
-                
-                results = [executor.submit(processMedia, fp) for fp in filePaths]
-
-                for res in concurrent.futures.as_completed(results):
+                # print(f"There are {len(filePaths)} files to process")
+                # print("********************************************")
+                with concurrent.futures.ProcessPoolExecutor(max_workers=args.maxworkers if args.maxworkers <= os.cpu_count() else os.cpu_count()) as executor:
+                    # results = [executor.submit(processMedia, fp) for fp in filePaths]
                     
-                    dbManager.addMediaDataToDB(res.result())
+                    results = [executor.submit(processMedia, fp) for fp in filePaths]
+
+                    for res in concurrent.futures.as_completed(results):
+                        try:
+                            dbManager.addMediaDataToDB(res.result())
+                        except Exception as e:
+                            # pass
+                            writeToLog(("ERROR", e))
 
     
     logging.info("Media finder search complete")

@@ -13,36 +13,48 @@ import time
 
 class MediaFinder:
 
-    def __init__(self, _initialSearchDirectory=".", _queueRef = None):
+    def __init__(self, _initialSearchDirectory=".", _queueRef = None, _searchDirsOnly = False):
 
         self.initialSearchDirectory = _initialSearchDirectory
-        self.files = []
+        # self.files = []
+        # self.directories = []
         self.searchComplete = False
         self.queueRef = _queueRef
         
         #create the Process that will search for files
-        self.SearchProcess = Process(target=self.searchDirectory, args=[self.initialSearchDirectory, self.queueRef])
-        self.SearchProcess.start()
+        if not _searchDirsOnly:
+            self.SearchProcess = Process(target=self.searchDirectory, args=[self.initialSearchDirectory, self.queueRef])
+            self.SearchProcess.start()
+        else:
+            self.SearchProcess = Process(target=self.searchForDirectories, args=[self.initialSearchDirectory, self.queueRef])
+            self.SearchProcess.start()
         
-        # self.searchForFiles()
-        # self.searchDirectory(self.initialSearchDirectory)
     def stillSearching(self):
 
         return self.SearchProcess.is_alive()
 
-    def searchForFiles(self):
-        TESTFILESTOTAL = 31 + 246 + 327 + 15 + 3
-        self.searchDirectory(self.initialSearchDirectory)
-        self.searchComplete = True
-        # logging.info("Done searching for files")
-        # logging.debug(self.files[0])
-        # logging.debug(f"{len(self.files)} files were found to process out of an expected {TESTFILESTOTAL}")
+    def searchForDirectories(self, dirPath, qRef=None):
+        
+        with os.scandir(dirPath) as dirResults:
+            
+            fileCount = 0
+            for entry in dirResults:
+                if not entry.name.startswith(".") and entry.is_dir():
+                    
+                    self.searchForDirectories(entry.path, qRef)
+
+                if not entry.name.startswith(".") and entry.is_file():
+                    
+                    fileCount = fileCount + 1
+            qRef.put((dirPath, fileCount))
+                    
+                    
 
     def searchDirectory(self, dirPath, qRef=None):
 
         with os.scandir(dirPath) as dirResults:
-            tmpFiles = []
-
+            
+            
             for entry in dirResults:
                 if not entry.name.startswith(".") and entry.is_dir():
 
@@ -50,10 +62,9 @@ class MediaFinder:
 
                 if not entry.name.startswith(".") and entry.is_file():
 
-                    self.files.append(f"{dirPath}/{entry.name}")
+                    # self.files.append(f"{dirPath}/{entry.name}")
                     qRef.put(f"{dirPath}/{entry.name}")
                     # self.queueRef.put(f"{dirPath}/{entry.name}")
 
-            self.files.extend(tmpFiles)
 
         return
